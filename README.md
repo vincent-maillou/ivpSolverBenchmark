@@ -23,5 +23,7 @@ Implement the classic Runge-Kutta 4 algoritmh adapted to solve n-DOF second orde
 ### Algorithm
 - Parareal
 - Dormand-Prince ?
+### Optimization
+- Make a better use of Eigen/Dense capability 
 ### Benchmarking
 ### Interface

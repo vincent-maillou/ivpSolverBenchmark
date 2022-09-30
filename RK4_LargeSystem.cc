@@ -321,10 +321,14 @@ void RK4::Solve(){
 void RK4::RKStep(size_t t){
 
   // Compute the 4 coeficient stages of RK4 algorithm
-  Mrk.row(0) = h * Q2.transpose() + ButcherRK4.row(0) * Krk;
+  Mrk.row(0) = h * Q2.transpose() /* + ButcherRK4.row(0) * Krk*/ ;
+  // Krk.row(0) = (h * MBK.M /*Already inverted*/ * (
+              // - MBK.B * (Q2.transpose() /* + ButcherRK4.row(0) * Mrk */ ).transpose() 
+              // - MBK.K * (Q1.transpose() /* + ButcherRK4.row(0) * Krk */ ).transpose() 
+              // + FS.S*FS.F[2*t])).transpose();
   Krk.row(0) = (h * MBK.M /*Already inverted*/ * (
-              - MBK.B * (Q2.transpose() + ButcherRK4.row(0) * Mrk).transpose() 
-              - MBK.K * (Q1.transpose() + ButcherRK4.row(0) * Krk).transpose() 
+              - MBK.B * Q2 
+              - MBK.K * Q1 
               + FS.S*FS.F[2*t])).transpose();
 
 

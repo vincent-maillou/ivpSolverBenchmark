@@ -15,7 +15,7 @@ import subprocess
 
 fFrequency = 2
 fSampling = fFrequency * 12
-latticeSize = 1
+latticeSize = 2
 
 bashCommand = "./RK4_LargeSystem.out -out -ffrequency " + str(fFrequency) + " -fsampling "  + str(fSampling) + ' -latticesize ' + str(latticeSize)
 process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
