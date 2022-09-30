@@ -4,3 +4,5 @@
 *.vscode
 .vscode/
 *.csv
+*.ods
+.*.ods*

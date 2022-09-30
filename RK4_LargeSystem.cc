@@ -15,6 +15,7 @@
 #include <random>
 #include <vector>
 #include <fstream>
+#include <chrono>
 
 #include <Eigen/Dense>
 
@@ -378,6 +379,7 @@ int main(int argc,char**argv)
 {
   bool verbose(false);
   bool writeOutput(false);
+  bool benchmarking(false);
 
   uint latticeSize(1);
   uint fFrequency(72000);
@@ -391,6 +393,9 @@ int main(int argc,char**argv)
 
     if(argv[i] == std::string("-out"))
       writeOutput = true;
+
+    if(argv[i] == std::string("-benchmarking"))
+      benchmarking = true;
 
     if(argv[i] == std::string("-latticesize"))
       latticeSize = std::stol(argv[i+1]);
@@ -410,7 +415,24 @@ int main(int argc,char**argv)
 
   // Performe the simulation
   RK4 solver(lattice);
-  solver.Solve();
+
+  if(benchmarking){
+    auto begin = std::chrono::high_resolution_clock::now(); 
+
+    solver.Solve(); 
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+  
+    std::cout << "Benchmarked for:" << std::endl;
+    std::cout << "  latticesize: " << latticeSize << std::endl;
+    std::cout << "  fFrequency: " << fFrequency << std::endl;
+    std::cout << "  fsampling: " << fsampling << std::endl;
+    std::cout << "  time: " << elapsed.count()/1000000000.0 << " [s]" << std::endl;
+  }
+  else{
+    solver.Solve();
+  }
 
   if(writeOutput){
     lattice.toFile();
