@@ -25,5 +25,7 @@ Implement the classic Runge-Kutta 4 algoritmh adapted to solve n-DOF second orde
 - Dormand-Prince ?
 ### Optimization
 - Make a better use of Eigen/Dense capability 
+  - Defining butcher tab as 4(->3) Eigen Sparses Vector ?
+  - Defining M, B and K as 3 Eigen Sparses Matrix
 ### Benchmarking
 ### Interface
