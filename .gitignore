@@ -1,0 +1,6 @@
+# Ignore all compilation and runtime output files
+*.out
+*.o
+*.vscode
+.vscode/
+*.csv
