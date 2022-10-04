@@ -139,8 +139,8 @@ void Lattice::InitialiseFSvector(){
 
   // Fill the F (excitation) vector
   for(size_t i(0); i < (sampleRate*simDuration)+1; ++i){
-    FS.F[i] = std::cos(excitationFrequency*((reel)i/(sampleRate+1)));
-    // FS.F[i] = 0.;
+    // FS.F[i] = std::cos(2*PI*excitationFrequency*((reel)i/(sampleRate)));
+    FS.F[i] = 0.;
   }
 
   // Initialize the Shape matrix as well, this matrix define on wich elements
@@ -303,6 +303,8 @@ class RK4{
 
       Q1.resize(DOF); // Initialized with 0
       Q2.resize(DOF);
+
+      Q1(0) = 1;
 
       Mrk.resize(4, DOF);
       Krk.resize(4, DOF);
