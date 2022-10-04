@@ -16,6 +16,7 @@
 #include <vector>
 #include <fstream>
 #include <chrono>
+#include <string>
 
 #include <Eigen/Dense>
 
@@ -24,7 +25,6 @@ using reel = double;
 
 typedef Eigen::Matrix<reel, Eigen::Dynamic, Eigen::Dynamic> MatrixXd;
 typedef Eigen::DiagonalMatrix< reel, Eigen::Dynamic> DiagonalMatrixXd;
-typedef Eigen::Matrix<reel, 4, 4> Matrix4d;
 typedef Eigen::Matrix<reel, Eigen::Dynamic, 1> VectorXd;
 
 
@@ -92,25 +92,12 @@ std::ostream& operator<<(std::ostream& sortie, FShapeMatrix const& FS){
  * interaction between the elements of the lattice.
  */
 class Lattice{
- private:
-  uint excitationFrequency; // Number of initial excitation points, DEFAULT: 72kHz
-  uint sampleRate; // [Hz], Number of F(t) points generated per second, DEFAULT: 2*4*72kHz = 576000
-  uint simDuration; // TODO: Implement the integer variation of simulation
-  uint latticeSize; // Size of the lattice across 1 dimmension
-  uint numberOfElements; // Total number of elements in the lattice
-
-  MBKMatrix MBK;
-  FShapeMatrix FS;
-
-  void InitialiseFSvector();
-  void InitialiseMBKMatrix();
-
  public:
-  Lattice(uint latticeSize_, uint excitationFrequency_ = 72000, uint pointsPerPeriode_ = 4, uint simDuration_ = 1) : 
+  Lattice(uint latticeSize_, reel sampleRate_, uint numberOfSteps_, reel frequencyOfExcitationSource_): 
     latticeSize(latticeSize_),
-    excitationFrequency(excitationFrequency_),
-    sampleRate(2 * pointsPerPeriode_ * excitationFrequency_ /* [Hz], F(t) upSampled 2 times for RK4 need*/),
-    simDuration(simDuration_) 
+    sampleRate(sampleRate_),
+    numberOfSteps(numberOfSteps_),
+    frequencyOfExcitationSource(frequencyOfExcitationSource_) 
     {
       numberOfElements = latticeSize*latticeSize;
 
@@ -123,24 +110,35 @@ class Lattice{
 
   uint getSize() const { return latticeSize; }
   uint getNDOF() const { return numberOfElements; }
-  uint getSampleRate() const {
-    /* Return half of the SampleRate, we upSample x2 the F() excitation vector since 
-    well need to access F(t+0.5*h) during RK4 algorithm. */
-    return sampleRate/2;
-  }
-  uint getSimDuration() const { return simDuration; }
+  reel getTimeStep() const { return 1./sampleRate; }
+  uint getNumberOfRKStepsToPerfome() const { return numberOfSteps/2; }
   MBKMatrix getMBK() const { return MBK; }
   FShapeMatrix getFS() const { return FS; }
 
+ private:
+  reel sampleRate; // [Hz]
+  uint numberOfSteps; // [N]
+  reel frequencyOfExcitationSource; // [Hz]
+
+  uint latticeSize; // Size of the lattice across 1 dimmension
+  uint numberOfElements; // Total number of elements in the lattice
+
+  MBKMatrix MBK;
+  FShapeMatrix FS;
+
+  void InitialiseFSvector();
+  void InitialiseMBKMatrix();
 };
 
 void Lattice::InitialiseFSvector(){
-  FS.F.resize((sampleRate*simDuration)+1);
+  FS.F.resize(numberOfSteps+2);
+
+  reel numberOfPeriodeToSimulate( (numberOfSteps+2)*frequencyOfExcitationSource/sampleRate );
 
   // Fill the F (excitation) vector
-  for(size_t i(0); i < (sampleRate*simDuration)+1; ++i){
-    // FS.F[i] = std::cos(2*PI*excitationFrequency*((reel)i/(sampleRate)));
-    FS.F[i] = 0.;
+  for(size_t i(0); i < numberOfSteps+2; ++i){
+    FS.F[i] = std::cos(2.*PI*frequencyOfExcitationSource*( (reel)i*numberOfPeriodeToSimulate/((numberOfSteps+2)*frequencyOfExcitationSource) ));
+    // FS.F[i] = 0.;
   }
 
   // Initialize the Shape matrix as well, this matrix define on wich elements
@@ -247,7 +245,7 @@ void Lattice::toFile() const{
 
   ofs << "F(t) = cos(2*PI*f*t)" << std::endl;
 
-  for(size_t i(0); i < (sampleRate*simDuration)+1; ++i){
+  for(size_t i(0); i < numberOfSteps; ++i){
     ofs << FS.F[i] << std::endl;
   }
 }
@@ -260,6 +258,46 @@ void Lattice::toFile() const{
  * 
  */
 class RK4{
+ public:
+  RK4(Lattice lattice_) : 
+    MBK(lattice_.getMBK()),
+    FS(lattice_.getFS()),
+    DOF(lattice_.getNDOF()),
+    numberOfSteps(lattice_.getNumberOfRKStepsToPerfome()),
+    h(lattice_.getTimeStep()),
+    h6(h/6.),
+    h2(h/2.)
+    {
+      std::cout << h << std::endl;
+      // Pre-compute M^-1 -> B, K F matrix
+      MBK.B = MBK.M.inverse()*MBK.B;
+      MBK.K = MBK.M.inverse()*MBK.K;
+      FS.S = MBK.M.inverse()*FS.S;
+
+      X_output.resize(DOF, numberOfSteps);
+
+      Q1.resize(DOF); // Initialized with 0
+      Q2.resize(DOF);
+
+      // Q1(0) = 1;
+
+      Mrk_1.resize(DOF);
+      Mrk_2.resize(DOF);
+      Mrk_3.resize(DOF);
+      Mrk_4.resize(DOF);
+      
+      Krk_1.resize(DOF);
+      Krk_2.resize(DOF);
+      Krk_3.resize(DOF);
+      Krk_4.resize(DOF);
+
+      Mrk_i.resize(DOF);
+      Krk_i.resize(DOF);
+    } 
+
+  void Solve();
+  void toFile() const;
+
  private:
   uint numberOfSteps;
   reel h; // RK4 time-step
@@ -286,8 +324,6 @@ class RK4{
 
   VectorXd Mrk_i;
   VectorXd Krk_i;
-  
-  Matrix4d ButcherRK4; // RK4 Butcher tab
 
   // Simulation parameter
   MBKMatrix MBK; // WARNING: At initialization we invert the M Matrix since it's how it appears in the calculation
@@ -295,55 +331,7 @@ class RK4{
   uint DOF;
   
   void RKStep(size_t t);
-  void derivatives(VectorXd& targetK, VectorXd& targetM, size_t forceSample);
-
- public:
-  RK4(Lattice lattice_) : 
-    MBK(lattice_.getMBK()),
-    FS(lattice_.getFS()),
-    DOF(lattice_.getNDOF()),
-    numberOfSteps(lattice_.getSampleRate() * lattice_.getSimDuration()),
-    h(1.*lattice_.getSimDuration()/numberOfSteps),
-    h6(h/6.),
-    h2(h/2)
-    {
-
-      /* ButcherRK4 << 0,    0,    0, 0,
-                    1./2, 0,    0, 0,
-                    0,    1./2, 0, 0,
-                    0,    0,    1, 0; */
-
-      //std::cout << ButcherRK4.row(0) << std::endl;
-
-      // Pre-compute M^-1 -> B, K F matrix
-      MBK.B = MBK.M.inverse()*MBK.B;
-      MBK.K = MBK.M.inverse()*MBK.K;
-      FS.S = MBK.M.inverse()*FS.S;
-
-      X_output.resize(DOF, numberOfSteps);
-
-      Q1.resize(DOF); // Initialized with 0
-      Q2.resize(DOF);
-
-      Q1(0) = 1;
-
-      Mrk_1.resize(DOF);
-      Mrk_2.resize(DOF);
-      Mrk_3.resize(DOF);
-      Mrk_4.resize(DOF);
-      
-      Krk_1.resize(DOF);
-      Krk_2.resize(DOF);
-      Krk_3.resize(DOF);
-      Krk_4.resize(DOF);
-
-      Mrk_i.resize(DOF);
-      Krk_i.resize(DOF);
-    } 
-
-  void Solve();
-  void toFile() const;
-
+  void derivatives(VectorXd& targetK, VectorXd& targetM, size_t t);
 };
 
 void RK4::Solve(){
@@ -351,6 +339,8 @@ void RK4::Solve(){
   uint completed = 0;
    
   std::cout << "\r" << "RK4 PROGRESSION: " << completed * 10 <<"%   " << std::flush;
+
+  // std::cout << "GEFE: " << numberOfSteps << std::endl;
 
   for(size_t i(0); i < numberOfSteps; ++i){
     RKStep(i);
@@ -365,9 +355,9 @@ void RK4::Solve(){
   std::cout << "\r" << "RK4 PROGRESSION: " << completed * 10 <<"%" << std::endl; 
  }
 
-inline void RK4::derivatives(VectorXd& targetM, VectorXd& targetK, size_t forceSample) {
+inline void RK4::derivatives(VectorXd & targetM, VectorXd & targetK, size_t t) {
   targetM = Krk_i;
-  targetK = -MBK.B * Krk_i -MBK.K * Mrk_i + FS.S*FS.F[forceSample];
+  targetK = -MBK.B * Krk_i -MBK.K * Mrk_i + FS.S*FS.F[t];
 }
 
 inline void RK4::RKStep(size_t t){
@@ -426,9 +416,10 @@ int main(int argc,char**argv)
   bool benchmarking(false);
 
   uint latticeSize(1);
-  uint fFrequency(72000);
-  uint pointsPerPeriode(4);
-  uint simDuration(1);
+  reel sampleRate(100);
+  reel frequencyOfExcitationSource(1);
+  uint numberOfPeriodeToSimulate(1);
+  uint numberOfSteps(sampleRate*(numberOfPeriodeToSimulate/frequencyOfExcitationSource));
 
   // Parsing the input parameter
   for(int i=0;i<argc;i++)
@@ -445,18 +436,18 @@ int main(int argc,char**argv)
     if(argv[i] == std::string("-latticesize"))
       latticeSize = std::stol(argv[i+1]);
 
-    if(argv[i] == std::string("-ffrequency"))
-      fFrequency = std::stol(argv[i+1]);
+    if(argv[i] == std::string("-sampleRate"))
+      sampleRate = std::stod(argv[i+1]);
 
-    if(argv[i] == std::string("-pointsPerPeriode"))
-      pointsPerPeriode = std::stol(argv[i+1]);
+    if(argv[i] == std::string("-numberOfSteps"))
+      numberOfSteps = std::stoul(argv[i+1]);
 
-    if(argv[i] == std::string("-simDuration"))
-      simDuration = std::stol(argv[i+1]);
+    if(argv[i] == std::string("-frequencyOfExcitationSource"))
+      frequencyOfExcitationSource = std::stod(argv[i+1]);
   } 
-
+  //std::cout << "ee " << frequencyOfExcitationSource << std::endl;
   // Creating the lattice
-  Lattice lattice(latticeSize, fFrequency, pointsPerPeriode, simDuration);
+  Lattice lattice(latticeSize, sampleRate, numberOfSteps, frequencyOfExcitationSource);
   if(verbose){
     std::cout << lattice << std::endl;
   }
@@ -474,8 +465,8 @@ int main(int argc,char**argv)
   
     std::cout << "Benchmarked for:" << std::endl;
     std::cout << "  latticesize: " << latticeSize << std::endl;
-    std::cout << "  fFrequency: " << fFrequency << std::endl;
-    std::cout << "  pointsPerPeriode: " << pointsPerPeriode << std::endl;
+    std::cout << "  sampleRate: " << sampleRate << std::endl;
+    std::cout << "  numberOfSteps: " << numberOfSteps << std::endl;
     std::cout << "  time: " << elapsed.count()/1000000000.0 << " [s]" << std::endl;
   }
   else{

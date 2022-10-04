@@ -12,19 +12,25 @@ import subprocess
 import math
 
 
-
 """ Executing the simulation parsing the chosen parameter """
 
-fFrequency = 1
-pointsPerPeriode = 100
-latticeSize = 1
-simDuration = 100 # [s] integer
+latticeSize = 2
+
+sampleRate = 1000 # [Hz] reel
+frequencyOfExcitationSource = 0.1 # [Hz] reel
+numberOfPeriodeToSimulate = 1 # [N] reel
+
+def NumberOfStepsToPerfom(sampleRate, numberOfPeriodeToSimulate, frequencyOfExcitationSource):
+    return int(numberOfPeriodeToSimulate*(sampleRate/frequencyOfExcitationSource))
+
+numberOfSteps = NumberOfStepsToPerfom(sampleRate, numberOfPeriodeToSimulate, frequencyOfExcitationSource) # [N] uint
+
 
 bashCommand = "make"
 process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 output, error = process.communicate()
 
-bashCommand = "./RK4_LargeSystem.out -out -ffrequency " + str(fFrequency) + " -pointsPerPeriode "  + str(pointsPerPeriode) + ' -latticesize ' + str(latticeSize) + ' -simDuration ' + str(simDuration)
+bashCommand = "./RK4_LargeSystem.out -out -latticesize " + str(latticeSize) + " -sampleRate " + str(sampleRate) + " -numberOfSteps "  + str(numberOfSteps) + ' -frequencyOfExcitationSource ' + str(frequencyOfExcitationSource)
 process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 output, error = process.communicate()
 
@@ -54,10 +60,10 @@ with open('SIM_X.csv', 'r') as SIM_X_file:
             SIM_X[i].append(float(row[i]))
 
 SIM_F_t = []
-SIM_F_t = [(i/len(SIM_F))*simDuration for i in range(len(SIM_F))]
+SIM_F_t = [(i/len(SIM_F))*numberOfSteps/sampleRate for i in range(len(SIM_F))]
 
 SIM_X_t = []
-SIM_X_t = [(i/len(SIM_X[0]))*simDuration for i in range(len(SIM_X[0]))]
+SIM_X_t = [(i/len(SIM_X[0]))*numberOfSteps/sampleRate for i in range(len(SIM_X[0]))]
 
 # SIM_test = [0.36 for i in range(len(SIM_X[0]))]
 # SIM_test_t = [(i/len(SIM_X[0]))*simDuration for i in range(len(SIM_X[0]))]
@@ -74,7 +80,7 @@ for i in range(len(SIM_X)+1):
         plt.plot(SIM_X_t, SIM_X[i-1])
         # plt.plot(SIM_test_t, SIM_test)
         
-plt.xlabel('t')
+plt.xlabel('t [s]')
 plt.show()
 
 print("Max of X[0]: " + str(max(SIM_X[0])))
