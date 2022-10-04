@@ -173,7 +173,7 @@ void Lattice::InitialiseMBKMatrix(){
   // Filling B Matrix
   MBK.B.resize(numberOfElements, numberOfElements);
   MBK.B.setIdentity();
-  MBK.B = 0.01 * MBK.B;
+  MBK.B = 0.1 * MBK.B;
 
   // Filling K Matrix
   MBK.K.resize(numberOfElements, numberOfElements);
@@ -263,6 +263,8 @@ class RK4{
  private:
   uint numberOfSteps;
   reel h; // RK4 time-step
+  reel h6; // = h/6
+  reel h2; // = h/2
 
   // RK4 Internal parameter
   MatrixXd X_output;
@@ -270,8 +272,21 @@ class RK4{
   VectorXd Q1; // Vector of first-part decomposed ODE (for Krk matrix computation)
   VectorXd Q2; // Vector of second-part decomposed ODE (for Mrk matrix computation)
 
-  MatrixXd Mrk; // RK4 M matrix coefficients
-  MatrixXd Krk; // RK4 K Matrix coefficients
+  // RK4 M matrix coefficients
+  VectorXd Mrk_1;
+  VectorXd Mrk_2;
+  VectorXd Mrk_3;
+  VectorXd Mrk_4;
+  
+  // RK4 K Matrix coefficients
+  VectorXd Krk_1;
+  VectorXd Krk_2;
+  VectorXd Krk_3;
+  VectorXd Krk_4;
+
+  VectorXd Mrk_i;
+  VectorXd Krk_i;
+  
   Matrix4d ButcherRK4; // RK4 Butcher tab
 
   // Simulation parameter
@@ -280,6 +295,7 @@ class RK4{
   uint DOF;
   
   void RKStep(size_t t);
+  void derivatives(VectorXd& targetK, VectorXd& targetM, size_t forceSample);
 
  public:
   RK4(Lattice lattice_) : 
@@ -287,17 +303,22 @@ class RK4{
     FS(lattice_.getFS()),
     DOF(lattice_.getNDOF()),
     numberOfSteps(lattice_.getSampleRate() * lattice_.getSimDuration()),
-    h(1.*lattice_.getSimDuration()/numberOfSteps)
+    h(1.*lattice_.getSimDuration()/numberOfSteps),
+    h6(h/6.),
+    h2(h/2)
     {
 
-      ButcherRK4 << 0,    0,    0, 0,
+      /* ButcherRK4 << 0,    0,    0, 0,
                     1./2, 0,    0, 0,
                     0,    1./2, 0, 0,
-                    0,    0,    1, 0;
+                    0,    0,    1, 0; */
 
       //std::cout << ButcherRK4.row(0) << std::endl;
 
-      MBK.M.inverse();
+      // Pre-compute M^-1 -> B, K F matrix
+      MBK.B = MBK.M.inverse()*MBK.B;
+      MBK.K = MBK.M.inverse()*MBK.K;
+      FS.S = MBK.M.inverse()*FS.S;
 
       X_output.resize(DOF, numberOfSteps);
 
@@ -306,8 +327,18 @@ class RK4{
 
       Q1(0) = 1;
 
-      Mrk.resize(4, DOF);
-      Krk.resize(4, DOF);
+      Mrk_1.resize(DOF);
+      Mrk_2.resize(DOF);
+      Mrk_3.resize(DOF);
+      Mrk_4.resize(DOF);
+      
+      Krk_1.resize(DOF);
+      Krk_2.resize(DOF);
+      Krk_3.resize(DOF);
+      Krk_4.resize(DOF);
+
+      Mrk_i.resize(DOF);
+      Krk_i.resize(DOF);
     } 
 
   void Solve();
@@ -334,44 +365,34 @@ void RK4::Solve(){
   std::cout << "\r" << "RK4 PROGRESSION: " << completed * 10 <<"%" << std::endl; 
  }
 
-void RK4::RKStep(size_t t){
+inline void RK4::derivatives(VectorXd& targetM, VectorXd& targetK, size_t forceSample) {
+  targetM = Krk_i;
+  targetK = -MBK.B * Krk_i -MBK.K * Mrk_i + FS.S*FS.F[forceSample];
+}
+
+inline void RK4::RKStep(size_t t){
 
   // Compute the 4 coeficient stages of RK4 algorithm
-  // Stage 1
-  Mrk.row(0) = Q2.transpose() + ButcherRK4.row(0) * Krk ;
-  Krk.row(0) = (MBK.M * (
-              - MBK.B * (Q2.transpose() + ButcherRK4.row(0) * Mrk ).transpose() 
-              - MBK.K * (Q1.transpose() + ButcherRK4.row(0) * Krk ).transpose() 
-              + FS.S*FS.F[2*t])).transpose();
-  /* Krk.row(0) = (MBK.M * (
-              - MBK.B * Q2 
-              - MBK.K * Q1 
-              + FS.S*FS.F[2*t])).transpose(); */
+  derivatives(Mrk_1, Krk_1, 2*t);
 
-  // Stage 2
-  Mrk.row(1) = Q2.transpose() + ButcherRK4.row(1) * Krk;
-  Krk.row(1) = (MBK.M /*Already inverted*/ * (
-              - MBK.B * (Q2.transpose() + ButcherRK4.row(1) * Mrk).transpose() 
-              - MBK.K * (Q1.transpose() + ButcherRK4.row(1) * Krk).transpose() 
-              + FS.S*FS.F[2*t+1])).transpose();
-  
-  // Stage 3
-  Mrk.row(2) = Q2.transpose() + ButcherRK4.row(2) * Krk;
-  Krk.row(2) = (MBK.M /*Already inverted*/ * (
-              - MBK.B * (Q2.transpose() + ButcherRK4.row(2) * Mrk).transpose() 
-              - MBK.K * (Q1.transpose() + ButcherRK4.row(2) * Krk).transpose() 
-              + FS.S*FS.F[2*t+1])).transpose();
-  
-  
-  Mrk.row(3) = Q2.transpose() + ButcherRK4.row(3) * Krk;
-  Krk.row(3) = (MBK.M /*Already inverted*/ * (
-              - MBK.B * (Q2.transpose() + ButcherRK4.row(3) * Mrk).transpose() 
-              - MBK.K * (Q1.transpose() + ButcherRK4.row(3) * Krk).transpose() 
-              + FS.S*FS.F[2*t+2])).transpose();
-   
+  Mrk_i = Q1 + h2*h*Mrk_1;
+  Krk_i = Q2 + h2*h*Krk_1;
+
+  derivatives(Mrk_2, Krk_2, 2*t+1);
+
+  Mrk_i = Q1 + h2*h*Mrk_2;
+  Krk_i = Q2 + h2*h*Krk_2;
+
+  derivatives(Mrk_3, Krk_3, 2*t+1);
+
+  Mrk_i = Q1 + h2*Mrk_2;
+  Krk_i = Q2 + h2*Krk_2;
+
+  derivatives(Mrk_4, Krk_4, 2*t+2);
+
   // Compute next Q1 and Q2 vectors
-  Q1 += h/6 * ( Mrk.row(0) + 2*Mrk.row(1) + 2*Mrk.row(2) + Mrk.row(3) );
-  Q2 += h/6 * ( Krk.row(0) + 2*Krk.row(1) + 2*Krk.row(2) + Krk.row(3) );
+  Q1 += h6 * ( Mrk_1 + 2*Mrk_2 + 2*Mrk_3 + Mrk_4 );
+  Q2 += h6 * ( Krk_1 + 2*Krk_2 + 2*Krk_3 + Krk_4 );
   
   X_output.col(t) = Q1;
 }

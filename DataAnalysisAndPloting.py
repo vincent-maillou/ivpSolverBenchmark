@@ -18,7 +18,7 @@ import math
 fFrequency = 1
 pointsPerPeriode = 100
 latticeSize = 1
-simDuration = 30 # [s] integer
+simDuration = 100 # [s] integer
 
 bashCommand = "make"
 process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
@@ -59,6 +59,9 @@ SIM_F_t = [(i/len(SIM_F))*simDuration for i in range(len(SIM_F))]
 SIM_X_t = []
 SIM_X_t = [(i/len(SIM_X[0]))*simDuration for i in range(len(SIM_X[0]))]
 
+# SIM_test = [0.36 for i in range(len(SIM_X[0]))]
+# SIM_test_t = [(i/len(SIM_X[0]))*simDuration for i in range(len(SIM_X[0]))]
+
 plt.figure()
 for i in range(len(SIM_X)+1):
     if i == 0:
@@ -69,6 +72,8 @@ for i in range(len(SIM_X)+1):
         plt.subplot(len(SIM_X)+1, 1, i+1)
         plt.ylabel('X_' + str(i) +'(t)')
         plt.plot(SIM_X_t, SIM_X[i-1])
+        # plt.plot(SIM_test_t, SIM_test)
+        
 plt.xlabel('t')
 plt.show()
 
