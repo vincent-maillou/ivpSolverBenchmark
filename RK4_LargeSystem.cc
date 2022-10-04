@@ -94,7 +94,8 @@ std::ostream& operator<<(std::ostream& sortie, FShapeMatrix const& FS){
 class Lattice{
  private:
   uint excitationFrequency; // Number of initial excitation points, DEFAULT: 72kHz
-  uint sampleRate; // Number of F(t) points generated, DEFAULT: 2*4*72kHz = 576000
+  uint sampleRate; // [Hz], Number of F(t) points generated per second, DEFAULT: 2*4*72kHz = 576000
+  uint simDuration; // TODO: Implement the integer variation of simulation
   uint latticeSize; // Size of the lattice across 1 dimmension
   uint numberOfElements; // Total number of elements in the lattice
 
@@ -105,10 +106,11 @@ class Lattice{
   void InitialiseMBKMatrix();
 
  public:
-  Lattice(uint latticeSize_, uint excitationFrequency_ = 72000, uint pointsPerPeriode_ = 4) : 
+  Lattice(uint latticeSize_, uint excitationFrequency_ = 72000, uint pointsPerPeriode_ = 4, uint simDuration_ = 1) : 
     latticeSize(latticeSize_),
     excitationFrequency(excitationFrequency_),
-    sampleRate(2 * pointsPerPeriode_ * excitationFrequency_ /*4 points per periode, upSampled 2 times for RK4 need*/) 
+    sampleRate(2 * pointsPerPeriode_ * excitationFrequency_ /* [Hz], F(t) upSampled 2 times for RK4 need*/),
+    simDuration(simDuration_) 
     {
       numberOfElements = latticeSize*latticeSize;
 
@@ -126,17 +128,19 @@ class Lattice{
     well need to access F(t+0.5*h) during RK4 algorithm. */
     return sampleRate/2;
   }
+  uint getSimDuration() const { return simDuration; }
   MBKMatrix getMBK() const { return MBK; }
   FShapeMatrix getFS() const { return FS; }
 
 };
 
 void Lattice::InitialiseFSvector(){
-  FS.F.resize(sampleRate);
+  FS.F.resize((sampleRate*simDuration)+1);
 
-  // Fill the F (excitation) vector with (by default) 72kHz cos() of unair amplitude
-  for(size_t i(0); i < sampleRate; ++i){
-    FS.F[i] = std::cos(2*PI*excitationFrequency*((reel)i/sampleRate));
+  // Fill the F (excitation) vector
+  for(size_t i(0); i < (sampleRate*simDuration)+1; ++i){
+    FS.F[i] = std::cos(excitationFrequency*((reel)i/(sampleRate+1)));
+    // FS.F[i] = 0.;
   }
 
   // Initialize the Shape matrix as well, this matrix define on wich elements
@@ -169,6 +173,7 @@ void Lattice::InitialiseMBKMatrix(){
   // Filling B Matrix
   MBK.B.resize(numberOfElements, numberOfElements);
   MBK.B.setIdentity();
+  MBK.B = 0.01 * MBK.B;
 
   // Filling K Matrix
   MBK.K.resize(numberOfElements, numberOfElements);
@@ -190,29 +195,37 @@ void Lattice::InitialiseMBKMatrix(){
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> disLocal(minLocalK, maxLocalK);
 
+  // TODO: Re-implement random values after debuging?
+  // Will be needed when we'll have a look at the entire optimization process
+
   // 1. Filling the diagonal (local stifness)
   for(size_t i(0); i < numberOfElements; ++i){
-    MBK.K(i, i) = disLocal(gen);
+    // MBK.K(i, i) = disLocal(gen);
+    MBK.K(i, i) = 1;
   }
 
   // 2. Filling the remaining coef of the D matrix (coupling)
   if(numberOfElements > 2){
     std::uniform_real_distribution<> disCoupling(minCouplingK, maxCouplingK);
     for(size_t i(0); i < numberOfElements-1; ++i){
-      MBK.K(i, i+1) = disCoupling(gen);
+      // MBK.K(i, i+1) = disCoupling(gen);
+      MBK.K(i, i+1) = 0.05;
     }
 
     for(size_t j(0); j < numberOfElements-1; ++j){
-      MBK.K(j+1, j) = disCoupling(gen);
+      // MBK.K(j+1, j) = disCoupling(gen);
+      MBK.K(j+1, j) = 0.05;
     }
 
     // 3. Filling the identity by bloc coef (coupling)
     for(size_t i(0); i < numberOfElements-latticeSize; ++i){ //latticeSize
-      MBK.K(i, i+latticeSize) = disCoupling(gen);
+      // MBK.K(i, i+latticeSize) = disCoupling(gen);
+      MBK.K(i, i+latticeSize) = 0.05;
     }
 
     for(size_t j(0); j < numberOfElements-latticeSize; ++j){ //latticeSize
-      MBK.K(j+latticeSize, j) = disCoupling(gen);
+      // MBK.K(j+latticeSize, j) = disCoupling(gen);
+      MBK.K(j+latticeSize, j) = 0.05;
     }
   }
 }
@@ -234,7 +247,7 @@ void Lattice::toFile() const{
 
   ofs << "F(t) = cos(2*PI*f*t)" << std::endl;
 
-  for(size_t i(0); i < sampleRate; ++i){
+  for(size_t i(0); i < (sampleRate*simDuration)+1; ++i){
     ofs << FS.F[i] << std::endl;
   }
 }
@@ -256,7 +269,7 @@ class RK4{
 
   VectorXd Q1; // Vector of first-part decomposed ODE (for Krk matrix computation)
   VectorXd Q2; // Vector of second-part decomposed ODE (for Mrk matrix computation)
-  
+
   MatrixXd Mrk; // RK4 M matrix coefficients
   MatrixXd Krk; // RK4 K Matrix coefficients
   Matrix4d ButcherRK4; // RK4 Butcher tab
@@ -273,21 +286,22 @@ class RK4{
     MBK(lattice_.getMBK()),
     FS(lattice_.getFS()),
     DOF(lattice_.getNDOF()),
-    numberOfSteps(lattice_.getSampleRate())
+    numberOfSteps(lattice_.getSampleRate() * lattice_.getSimDuration()),
+    h(1.*lattice_.getSimDuration()/numberOfSteps)
     {
-      // We considere only 1s simulation for now
-      h = 1./numberOfSteps; 
 
       ButcherRK4 << 0,    0,    0, 0,
                     1./2, 0,    0, 0,
                     0,    1./2, 0, 0,
                     0,    0,    1, 0;
 
+      //std::cout << ButcherRK4.row(0) << std::endl;
+
       MBK.M.inverse();
 
       X_output.resize(DOF, numberOfSteps);
 
-      Q1.resize(DOF);
+      Q1.resize(DOF); // Initialized with 0
       Q2.resize(DOF);
 
       Mrk.resize(4, DOF);
@@ -321,38 +335,41 @@ void RK4::Solve(){
 void RK4::RKStep(size_t t){
 
   // Compute the 4 coeficient stages of RK4 algorithm
-  Mrk.row(0) = h * Q2.transpose() /* + ButcherRK4.row(0) * Krk*/ ;
-  // Krk.row(0) = (h * MBK.M /*Already inverted*/ * (
-              // - MBK.B * (Q2.transpose() /* + ButcherRK4.row(0) * Mrk */ ).transpose() 
-              // - MBK.K * (Q1.transpose() /* + ButcherRK4.row(0) * Krk */ ).transpose() 
-              // + FS.S*FS.F[2*t])).transpose();
-  Krk.row(0) = (h * MBK.M /*Already inverted*/ * (
+  // Stage 1
+  Mrk.row(0) = Q2.transpose() + ButcherRK4.row(0) * Krk ;
+  Krk.row(0) = (MBK.M * (
+              - MBK.B * (Q2.transpose() + ButcherRK4.row(0) * Mrk ).transpose() 
+              - MBK.K * (Q1.transpose() + ButcherRK4.row(0) * Krk ).transpose() 
+              + FS.S*FS.F[2*t])).transpose();
+  /* Krk.row(0) = (MBK.M * (
               - MBK.B * Q2 
               - MBK.K * Q1 
-              + FS.S*FS.F[2*t])).transpose();
+              + FS.S*FS.F[2*t])).transpose(); */
 
-
-  Mrk.row(1) = h * Q2.transpose() + ButcherRK4.row(1) * Krk;
-  Krk.row(1) = (h * MBK.M /*Already inverted*/ * (
+  // Stage 2
+  Mrk.row(1) = Q2.transpose() + ButcherRK4.row(1) * Krk;
+  Krk.row(1) = (MBK.M /*Already inverted*/ * (
               - MBK.B * (Q2.transpose() + ButcherRK4.row(1) * Mrk).transpose() 
               - MBK.K * (Q1.transpose() + ButcherRK4.row(1) * Krk).transpose() 
               + FS.S*FS.F[2*t+1])).transpose();
   
-  Mrk.row(2) = h * Q2.transpose() + ButcherRK4.row(2) * Krk;
-  Krk.row(2) = (h * MBK.M /*Already inverted*/ * (
+  // Stage 3
+  Mrk.row(2) = Q2.transpose() + ButcherRK4.row(2) * Krk;
+  Krk.row(2) = (MBK.M /*Already inverted*/ * (
               - MBK.B * (Q2.transpose() + ButcherRK4.row(2) * Mrk).transpose() 
               - MBK.K * (Q1.transpose() + ButcherRK4.row(2) * Krk).transpose() 
               + FS.S*FS.F[2*t+1])).transpose();
   
-  Mrk.row(3) = h * Q2.transpose() + ButcherRK4.row(3) * Krk;
-  Krk.row(3) = (h * MBK.M /*Already inverted*/ * (
+  
+  Mrk.row(3) = Q2.transpose() + ButcherRK4.row(3) * Krk;
+  Krk.row(3) = (MBK.M /*Already inverted*/ * (
               - MBK.B * (Q2.transpose() + ButcherRK4.row(3) * Mrk).transpose() 
               - MBK.K * (Q1.transpose() + ButcherRK4.row(3) * Krk).transpose() 
-              + FS.S*FS.F[2*t])).transpose();
+              + FS.S*FS.F[2*t+2])).transpose();
    
   // Compute next Q1 and Q2 vectors
-  Q1 += 1./6 * ( Mrk.row(0) + 2*Mrk.row(1) + 2*Mrk.row(2) + Mrk.row(3) );
-  Q2 += 1./6 * ( Krk.row(0) + 2*Krk.row(1) + 2*Krk.row(2) + Krk.row(3) );
+  Q1 += h/6 * ( Mrk.row(0) + 2*Mrk.row(1) + 2*Mrk.row(2) + Mrk.row(3) );
+  Q2 += h/6 * ( Krk.row(0) + 2*Krk.row(1) + 2*Krk.row(2) + Krk.row(3) );
   
   X_output.col(t) = Q1;
 }
@@ -387,7 +404,8 @@ int main(int argc,char**argv)
 
   uint latticeSize(1);
   uint fFrequency(72000);
-  uint fsampling(4);
+  uint pointsPerPeriode(4);
+  uint simDuration(1);
 
   // Parsing the input parameter
   for(int i=0;i<argc;i++)
@@ -407,12 +425,15 @@ int main(int argc,char**argv)
     if(argv[i] == std::string("-ffrequency"))
       fFrequency = std::stol(argv[i+1]);
 
-    if(argv[i] == std::string("-fsampling"))
-      fsampling = std::stol(argv[i+1]);
+    if(argv[i] == std::string("-pointsPerPeriode"))
+      pointsPerPeriode = std::stol(argv[i+1]);
+
+    if(argv[i] == std::string("-simDuration"))
+      simDuration = std::stol(argv[i+1]);
   } 
 
   // Creating the lattice
-  Lattice lattice(latticeSize, fFrequency, fsampling);
+  Lattice lattice(latticeSize, fFrequency, pointsPerPeriode, simDuration);
   if(verbose){
     std::cout << lattice << std::endl;
   }
@@ -431,7 +452,7 @@ int main(int argc,char**argv)
     std::cout << "Benchmarked for:" << std::endl;
     std::cout << "  latticesize: " << latticeSize << std::endl;
     std::cout << "  fFrequency: " << fFrequency << std::endl;
-    std::cout << "  fsampling: " << fsampling << std::endl;
+    std::cout << "  pointsPerPeriode: " << pointsPerPeriode << std::endl;
     std::cout << "  time: " << elapsed.count()/1000000000.0 << " [s]" << std::endl;
   }
   else{

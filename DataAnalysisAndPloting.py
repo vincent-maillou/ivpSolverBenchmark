@@ -9,15 +9,22 @@ Created on Thu Sep 29 14:09:54 2022
 import csv
 import matplotlib.pyplot as plt
 import subprocess
+import math
+
 
 
 """ Executing the simulation parsing the chosen parameter """
 
-fFrequency = 2
-fSampling = fFrequency * 12
-latticeSize = 2
+fFrequency = 1
+pointsPerPeriode = 100
+latticeSize = 1
+simDuration = 30 # [s] integer
 
-bashCommand = "./RK4_LargeSystem.out -out -ffrequency " + str(fFrequency) + " -fsampling "  + str(fSampling) + ' -latticesize ' + str(latticeSize)
+bashCommand = "make"
+process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
+output, error = process.communicate()
+
+bashCommand = "./RK4_LargeSystem.out -out -ffrequency " + str(fFrequency) + " -pointsPerPeriode "  + str(pointsPerPeriode) + ' -latticesize ' + str(latticeSize) + ' -simDuration ' + str(simDuration)
 process = subprocess.Popen(bashCommand.split(), stdout=subprocess.PIPE)
 output, error = process.communicate()
 
@@ -28,12 +35,10 @@ output, error = process.communicate()
 SIM_F = []
 with open('SIM_F.csv', 'r') as SIM_F_file:
     SIM_F_csv = csv.reader(SIM_F_file)
-    
     SIM_F_header = next(SIM_F_csv)
     
     for row in SIM_F_csv:
         SIM_F.append(float(row[0]))
-    
 
 SIM_X = []
 with open('SIM_X.csv', 'r') as SIM_X_file:
@@ -49,10 +54,10 @@ with open('SIM_X.csv', 'r') as SIM_X_file:
             SIM_X[i].append(float(row[i]))
 
 SIM_F_t = []
-SIM_F_t = [i/len(SIM_F) for i in range(len(SIM_F))]
+SIM_F_t = [(i/len(SIM_F))*simDuration for i in range(len(SIM_F))]
 
 SIM_X_t = []
-SIM_X_t = [i/len(SIM_X[0]) for i in range(len(SIM_X[0]))]
+SIM_X_t = [(i/len(SIM_X[0]))*simDuration for i in range(len(SIM_X[0]))]
 
 plt.figure()
 for i in range(len(SIM_X)+1):
@@ -66,6 +71,10 @@ for i in range(len(SIM_X)+1):
         plt.plot(SIM_X_t, SIM_X[i-1])
 plt.xlabel('t')
 plt.show()
+
+print("Max of X[0]: " + str(max(SIM_X[0])))
+print("Min of X[0]: " + str(min(SIM_X[0])))
+print("Max of F(t): " + str(max(SIM_F)))
 
     
     
